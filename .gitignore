@@ -1,1 +1,11 @@
+# Ignore local python env
 env/
+
+# Ignore environment variables
+env_variables
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+# C extensions
+*.so
