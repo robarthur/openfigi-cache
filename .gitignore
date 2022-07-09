@@ -2,7 +2,7 @@
 env/
 
 # Ignore environment variables
-env_variables
+env_variables.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
