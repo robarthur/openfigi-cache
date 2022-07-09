@@ -1,4 +1,14 @@
-{
-    "first_name": "Joe",
-    "last_name": "Bloggs"
-}
+[
+    {
+        "idType": "TICKER",
+        "idValue": "AAPL"
+    },
+    {
+        "idType": "TICKER",
+        "idValue": "MSFT"
+    },
+    {
+        "idType": "TICKER",
+        "idValue": "GOOG"
+    }
+]
