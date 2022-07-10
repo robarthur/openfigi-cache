@@ -1,0 +1,6 @@
+dynamodb:
+  image:  amazon/dynamodb-local
+  hostname: dynamodb
+  restart: always
+  ports:
+    - 8000:8000
