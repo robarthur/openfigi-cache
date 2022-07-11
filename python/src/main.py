@@ -26,14 +26,16 @@ def lambda_handler(event, context):
     if response.status_code == 200:
         response_json = response.json()
 
-        data = []
+        batch_data = []
         for i in zip(event, response_json):
             id = "_".join(i[0].values())
             data = i[1]['data']
             data = [dict(item, id=id) for item in data]
+            batch_data.extend(data)
 
         with table.batch_writer() as writer:
-            for item in data:
+            print(batch_data)
+            for item in batch_data:
                 writer.put_item(Item=item)
 
     return { 
