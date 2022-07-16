@@ -10,5 +10,13 @@
     {
         "idType": "TICKER",
         "idValue": "GOOG"
+    },
+    {
+        "idType": "TICKER",
+        "idValue": "AMZN"
+    },
+    {
+        "idType": "TICKER",
+        "idValue": "FB"
     }
 ]

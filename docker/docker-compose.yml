@@ -4,3 +4,9 @@ dynamodb:
   restart: always
   ports:
     - 8000:8000
+redis:
+  image: redis 
+  hostname: redis
+  restart: always
+  ports:
+    - 6379:6379

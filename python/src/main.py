@@ -1,6 +1,8 @@
 import os
+import json
 import boto3
 import requests
+import redis
 
 def lambda_handler(event, context):
     API_KEY = os.getenv('API_KEY')
@@ -10,34 +12,41 @@ def lambda_handler(event, context):
     if not API_KEY:
         raise ValueError('API_KEY environment variable is not set')
 
-    ddb = boto3.resource('dynamodb')
+    r = redis.Redis(charset="utf-8", decode_responses=True)
+    keys = get_cache_keys_from_event(event)
 
-    if os.getenv("IS_LOCAL"):
-        print(f"Running locally.  Use local dynamodb {LOCAL_DDB_ENDPOINT}")
-        ddb = boto3.resource('dynamodb', endpoint_url=LOCAL_DDB_ENDPOINT)
-   
-    table = ddb.Table('MappingsV3')
+    # Get as much as we can from cache
+    #cache_result = [json.loads(k) for k in r.mget(keys) if k ]
+    cache_result = [ json.loads(k) if k else None for k in r.mget(keys) ]
 
-    headers={}
-    headers.update({'X-OPENFIGI-KEY': API_KEY})
+    print(f"{cache_result =}")
+    cache_misses = get_cache_misses(cache_result, event)
+    print(f"{cache_misses =}")
 
-    response = requests.post(MAPPING_V3_API, headers=headers, json=event)
+    response_json = []
+    # Get everything else from API
+    if cache_misses:
+        headers={}
+        headers.update({'X-OPENFIGI-KEY': API_KEY})
+        response = requests.post(MAPPING_V3_API, headers=headers, json=cache_misses)
+        if response.status_code == 200:
+            response_json = response.json()
+            # Store new data in cache
+            cache_miss_keys = get_cache_keys_from_event(cache_misses)
+            for i in zip(cache_miss_keys, response_json):
+                r.set(i[0], json.dumps(i[1]))
 
-    if response.status_code == 200:
-        response_json = response.json()
+    # Concatentate the results
+    cache_result.extend(response_json)
 
-        batch_data = []
-        for i in zip(event, response_json):
-            id = "_".join(i[0].values())
-            data = i[1]['data']
-            data = [dict(item, id=id) for item in data]
-            batch_data.extend(data)
+    return cache_result
 
-        with table.batch_writer() as writer:
-            print(batch_data)
-            for item in batch_data:
-                writer.put_item(Item=item)
+def get_cache_misses(cache_result, event):
+    cache_misses = []
+    if None in cache_result:
+        empty_cache_result_indexes = [i for i, x in enumerate(cache_result) if x==None]
+        cache_misses = [event[i] for i in empty_cache_result_indexes]
+    return cache_misses
 
-    return { 
-        'response' : response.status_code
-    }
+def get_cache_keys_from_event(event):
+    return [ f"{d['idType']}_{d['idValue']}" for d in event ]
