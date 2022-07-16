@@ -26,27 +26,32 @@ provider "aws" {
 # Elasticache Resources
 #
 
-# resource "aws_elasticache_cluster" "example" {
-#   cluster_id           = "openfigi-cache"
-#   engine               = "redis"
-#   node_type            = "cache.t4g.micro"
-#   num_cache_nodes      = 1
-#   parameter_group_name = "default.redis6.2"
-#   engine_version       = "6.2"
-#   port                 = 6379
-# }
+resource "aws_elasticache_cluster" "example" {
+  cluster_id           = "openfigi-cache"
+  engine               = "redis"
+  node_type            = "cache.t4g.micro"
+  num_cache_nodes      = 1
+  parameter_group_name = "default.redis6.2"
+  engine_version       = "6.2"
+  port                 = 6379
+}
 
 #
 # Lambda Resources
 #
 
 resource "null_resource" "package_lambda" {
+  
+    provisioner "local-exec" {
+    command = "rm -rf deploy/"
+  }
+  
   provisioner "local-exec" {
     command = "pip install -r ./requirements.txt -t deploy/source/ --upgrade"
   }
 
   provisioner "local-exec" {
-    command = "cp python/src/main.py deploy/main.py"
+    command = "cp python/src/main.py deploy/source/main.py"
   }
 
   triggers = {
@@ -57,12 +62,12 @@ resource "null_resource" "package_lambda" {
 
 data "archive_file" "lambda" {
   type        = "zip"
-  source_dir = "deploy/"
+  source_dir = "deploy/source/"
   output_path = "deploy/open_figi_cache.zip"
 }
 
 resource "aws_s3_bucket" "lambda_deploy" {
-  bucket_prefix = "lambda_deploy"
+  bucket_prefix = "lambda-deploy"
 }
 
 resource "aws_s3_bucket_acl" "lambda_deploy" {
@@ -70,7 +75,18 @@ resource "aws_s3_bucket_acl" "lambda_deploy" {
   acl    = "private"
 }
 
+resource "aws_s3_object" "open_figi_cache_deploy" {
+  bucket = aws_s3_bucket.lambda_deploy.id
+  key    = data.archive_file.lambda.output_path
+  source = data.archive_file.lambda.output_path
+}
+
 resource "aws_lambda_function" "open_figi_cache" {
+  
+  depends_on = [
+    aws_s3_object.open_figi_cache_deploy
+  ]
+  
   function_name = "OpenFigiCache"
 
   # The bucket name as created earlier with "aws s3api create-bucket"
@@ -84,6 +100,12 @@ resource "aws_lambda_function" "open_figi_cache" {
   runtime = "python3.9"
 
   role = "${aws_iam_role.lambda_exec.arn}"
+
+  environment {
+    variables = {
+      API_KEY = var.api_key
+    }
+  }
 }
 
 resource "aws_cloudwatch_log_group" "open_figi_cache" {
