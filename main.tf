@@ -89,7 +89,7 @@ resource "aws_lambda_function" "open_figi_cache" {
 resource "aws_cloudwatch_log_group" "open_figi_cache" {
   name = "/aws/lambda/${aws_lambda_function.open_figi_cache.function_name}"
 
-  retention_in_days = 10
+  retention_in_days = 7
 }
 
 #
