@@ -86,6 +86,11 @@ resource "aws_lambda_function" "open_figi_cache" {
   role = "${aws_iam_role.lambda_exec.arn}"
 }
 
+resource "aws_cloudwatch_log_group" "open_figi_cache" {
+  name = "/aws/lambda/${aws_lambda_function.open_figi_cache.function_name}"
+
+  retention_in_days = 10
+}
 
 #
 # API Gateway Resources
@@ -94,3 +99,26 @@ resource "aws_lambda_function" "open_figi_cache" {
 #
 # IAM Resources 
 #
+
+resource "aws_iam_role" "lambda_exec" {
+  name = "serverless_lambda"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Sid    = ""
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_policy" {
+  role       = aws_iam_role.lambda_exec.name
+  # TODO custom policy with elasticache read/write/delete permissions
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
