@@ -11,19 +11,22 @@ def lambda_handler(event, context):
     MAPPING_V3_API='https://api.openfigi.com/v3/mapping'
     USE_SSL = False
 
+    body = json.loads(event.get('body'))
+
     if not API_KEY:
         raise ValueError('API_KEY environment variable is not set')
 
     print(f"{REDIS_ENDPOINT=}, {REDIS_PORT=}, {USE_SSL=}")
+    print(f"{body=}")
     r = redis.Redis(host=REDIS_ENDPOINT, port=REDIS_PORT, charset="utf-8", decode_responses=True, socket_connect_timeout=2)
-    keys = get_cache_keys_from_event(event)
+    keys = get_cache_keys_from_body(body)
 
     # Get as much as we can from cache
     #cache_result = [json.loads(k) for k in r.mget(keys) if k ]
     cache_result = [ json.loads(k) if k else None for k in r.mget(keys) ]
 
     print(f"{cache_result =}")
-    cache_misses = get_cache_misses(cache_result, event)
+    cache_misses = get_cache_misses(cache_result, body)
     print(f"{cache_misses =}")
 
     response_json = []
@@ -37,21 +40,25 @@ def lambda_handler(event, context):
         if response.status_code == 200:
             response_json = response.json()
             # Store new data in cache}
-            cache_miss_keys = get_cache_keys_from_event(cache_misses)
+            cache_miss_keys = get_cache_keys_from_body(cache_misses)
             for i in zip(cache_miss_keys, response_json):
                 r.set(i[0], json.dumps(i[1]))
 
     # Concatentate the results
     cache_result.extend(response_json)
 
-    return cache_result
+    return {
+    "isBase64Encoded": False,
+    "statusCode": 200,
+    "body": cache_result
+    }      
 
-def get_cache_misses(cache_result, event):
+def get_cache_misses(cache_result, body):
     cache_misses = []
     if None in cache_result:
         empty_cache_result_indexes = [i for i, x in enumerate(cache_result) if x==None]
-        cache_misses = [event[i] for i in empty_cache_result_indexes]
+        cache_misses = [body[i] for i in empty_cache_result_indexes]
     return cache_misses
 
-def get_cache_keys_from_event(event):
-    return [ f"{d['idType']}_{d['idValue']}" for d in event ]
+def get_cache_keys_from_body(body):
+    return [ f"{d['idType']}_{d['idValue']}" for d in body ]
