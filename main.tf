@@ -23,17 +23,72 @@ provider "aws" {
 }
 
 #
+# VPC Module
+#
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+
+  name = "open-figi-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  private_subnets  = ["10.0.0.0/24","10.0.2.0/24","10.0.3.0/24"]
+
+  enable_ipv6          = false
+  enable_dns_hostnames = true
+  enable_nat_gateway = true
+  single_nat_gateway  = true
+}
+
+
+#
 # Elasticache Resources
 #
 
-resource "aws_elasticache_cluster" "example" {
+resource "aws_elasticache_cluster" "openfigi_cache" {
   cluster_id           = "openfigi-cache"
+  subnet_group_name    = aws_elasticache_subnet_group.redis.name
+  security_group_ids   = [aws_security_group.elasticache.id]
   engine               = "redis"
   node_type            = "cache.t4g.micro"
   num_cache_nodes      = 1
   parameter_group_name = "default.redis6.x"
   engine_version       = "6.2"
   port                 = 6379
+}
+
+resource "aws_elasticache_subnet_group" "redis" {
+  name        = "openfigi-cache-subnet-group"
+  subnet_ids  = module.vpc.private_subnets
+}
+
+resource "aws_security_group" "elasticache" {
+  name        = "elasticache"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description      = "Redis from VPC"
+    from_port        = 6379
+    to_port          = 6379
+    protocol         = "tcp"
+    cidr_blocks      = module.vpc.private_subnets_cidr_blocks
+  }
+
+  ingress {
+    description      = "Redis from Lambda"
+    from_port        = 6379
+    to_port          = 6379
+    protocol         = "tcp"
+    security_groups = [aws_security_group.lambda.id]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
 }
 
 #
@@ -79,6 +134,7 @@ resource "aws_s3_object" "open_figi_cache_deploy" {
   bucket = aws_s3_bucket.lambda_deploy.id
   key    = data.archive_file.lambda.output_path
   source = data.archive_file.lambda.output_path
+  etag = filemd5(data.archive_file.lambda.output_path)
 }
 
 resource "aws_lambda_function" "open_figi_cache" {
@@ -92,6 +148,7 @@ resource "aws_lambda_function" "open_figi_cache" {
   # The bucket name as created earlier with "aws s3api create-bucket"
   s3_bucket = aws_s3_bucket.lambda_deploy.id
   s3_key    = data.archive_file.lambda.output_path
+  source_code_hash = filebase64sha256(data.archive_file.lambda.output_path)
 
   # "main" is the filename within the zip file (main.js) and "handler"
   # is the name of the property under which the handler function was
@@ -101,10 +158,31 @@ resource "aws_lambda_function" "open_figi_cache" {
 
   role = "${aws_iam_role.lambda_exec.arn}"
 
+  vpc_config {
+    # Every subnet should be able to reach an EFS mount target in the same Availability Zone. Cross-AZ mounts are not permitted.
+    subnet_ids         = module.vpc.private_subnets
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+
   environment {
     variables = {
       API_KEY = var.api_key
+      REDIS_ENDPOINT = aws_elasticache_cluster.openfigi_cache.cache_nodes[0].address
+      REDIS_PORT = aws_elasticache_cluster.openfigi_cache.cache_nodes[0].port
     }
+  }
+}
+
+resource "aws_security_group" "lambda" {
+  name        = "lambda"
+  vpc_id      = module.vpc.vpc_id
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
   }
 }
 
@@ -142,5 +220,23 @@ resource "aws_iam_role" "lambda_exec" {
 resource "aws_iam_role_policy_attachment" "lambda_policy" {
   role       = aws_iam_role.lambda_exec.name
   # TODO custom policy with elasticache read/write/delete permissions
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
+
+# resource "aws_iam_policy" "elasticache_access" {
+  
+#   name = "elasticache_access"
+
+#   policy = jsonencode({
+#     Version = "2012-10-17"
+#     Statement = [
+#       {
+#         Action = [
+#           "ec2:Describe*",
+#         ]
+#         Effect   = "Allow"
+#         Resource = "*"
+#       },
+#     ]
+#   })
+# }
