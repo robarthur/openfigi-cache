@@ -1,4 +1,4 @@
-[
+'{"body": [
     {
         "idType": "TICKER",
         "idValue": "AAPL"
@@ -18,5 +18,9 @@
     {
         "idType": "TICKER",
         "idValue": "FB"
+    },
+    {
+        "idType": "TICKER",
+        "idValue": "TWTR"
     }
-]
+]}'
