@@ -95,32 +95,6 @@ resource "aws_security_group" "elasticache" {
 # Lambda Resources
 #
 
-resource "null_resource" "package_lambda" {
-  
-    provisioner "local-exec" {
-    command = "rm -rf deploy/"
-  }
-  
-  provisioner "local-exec" {
-    command = "pip install -r ./requirements.txt -t deploy/source/ --upgrade"
-  }
-
-  provisioner "local-exec" {
-    command = "cp python/src/main.py deploy/source/main.py"
-  }
-
-  triggers = {
-    dependencies_versions = filemd5("./requirements.txt"),
-    source_version  = filemd5("python/src/main.py"),
-  }
-}
-
-data "archive_file" "lambda" {
-  type        = "zip"
-  source_dir = "deploy/source/"
-  output_path = "deploy/open_figi_cache.zip"
-}
-
 resource "aws_s3_bucket" "lambda_deploy" {
   bucket_prefix = "lambda-deploy"
 }
@@ -132,10 +106,18 @@ resource "aws_s3_bucket_acl" "lambda_deploy" {
 
 resource "aws_s3_object" "open_figi_cache_deploy" {
   bucket = aws_s3_bucket.lambda_deploy.id
-  key    = data.archive_file.lambda.output_path
-  source = data.archive_file.lambda.output_path
-  etag = filemd5(data.archive_file.lambda.output_path)
+  key    = "mappings.zip"
+  source = "deploy/mappings.zip"
+  source_hash = filemd5("deploy/mappings.zip")
 }
+
+resource "aws_s3_object" "keys_deploy" {
+  bucket = aws_s3_bucket.lambda_deploy.id
+  key    = "keys.zip"
+  source = "deploy/keys.zip"
+  source_hash = filemd5("deploy/keys.zip")
+}
+
 
 resource "aws_lambda_function" "open_figi_cache" {
   
@@ -147,13 +129,52 @@ resource "aws_lambda_function" "open_figi_cache" {
 
   # The bucket name as created earlier with "aws s3api create-bucket"
   s3_bucket = aws_s3_bucket.lambda_deploy.id
-  s3_key    = data.archive_file.lambda.output_path
-  source_code_hash = filebase64sha256(data.archive_file.lambda.output_path)
+  s3_key    = aws_s3_object.open_figi_cache_deploy.key
+  source_code_hash = filebase64sha256("deploy/mappings.zip")
 
   # "main" is the filename within the zip file (main.js) and "handler"
   # is the name of the property under which the handler function was
   # exported in that file.
-  handler = "main.lambda_handler"
+  handler = "mappings.lambda_handler"
+  runtime = "python3.9"
+  # The openfigi api can be slow to respond
+  timeout = 10
+
+  role = "${aws_iam_role.lambda_exec.arn}"
+
+  vpc_config {
+    # Every subnet should be able to reach an EFS mount target in the same Availability Zone. Cross-AZ mounts are not permitted.
+    subnet_ids         = module.vpc.private_subnets
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+
+  environment {
+    variables = {
+      API_KEY = var.api_key
+      REDIS_ENDPOINT = aws_elasticache_cluster.openfigi_cache.cache_nodes[0].address
+      REDIS_PORT = aws_elasticache_cluster.openfigi_cache.cache_nodes[0].port
+    }
+  }
+}
+
+resource "aws_lambda_function" "keys" {
+  
+  depends_on = [
+    aws_s3_object.keys_deploy
+  ]
+  
+  function_name = "OpenFigiKeys"
+
+  # The bucket name as created earlier with "aws s3api create-bucket"
+  s3_bucket = aws_s3_bucket.lambda_deploy.id
+  s3_key    = aws_s3_object.keys_deploy.key
+  source_code_hash = filebase64sha256("deploy/keys.zip")
+
+  # "main" is the filename within the zip file (main.js) and "handler"
+  # is the name of the property under which the handler function was
+  # exported in that file.
+  handler = "keys.lambda_handler"
   runtime = "python3.9"
 
   role = "${aws_iam_role.lambda_exec.arn}"
@@ -173,6 +194,7 @@ resource "aws_lambda_function" "open_figi_cache" {
     }
   }
 }
+
 
 resource "aws_security_group" "lambda" {
   name        = "lambda"
@@ -234,11 +256,47 @@ resource "aws_apigatewayv2_integration" "open_figi_cache" {
   integration_method = "POST"
 }
 
+resource "aws_apigatewayv2_integration" "keys" {
+  api_id = aws_apigatewayv2_api.lambda.id
+
+  integration_uri    = aws_lambda_function.keys.invoke_arn
+  integration_type   = "AWS_PROXY"
+  integration_method = "POST"
+}
+
 resource "aws_apigatewayv2_route" "open_figi_cache" {
   api_id = aws_apigatewayv2_api.lambda.id
 
   route_key = "POST /mapping"
   target    = "integrations/${aws_apigatewayv2_integration.open_figi_cache.id}"
+}
+
+resource "aws_apigatewayv2_route" "keys_get" {
+  api_id = aws_apigatewayv2_api.lambda.id
+
+  route_key = "GET /keys/{key}"
+  target    = "integrations/${aws_apigatewayv2_integration.keys.id}"
+}
+
+resource "aws_apigatewayv2_route" "keys_get_all" {
+  api_id = aws_apigatewayv2_api.lambda.id
+
+  route_key = "GET /keys"
+  target    = "integrations/${aws_apigatewayv2_integration.keys.id}"
+}
+
+resource "aws_apigatewayv2_route" "keys_delete" {
+  api_id = aws_apigatewayv2_api.lambda.id
+
+  route_key = "DELETE /keys/{key}"
+  target    = "integrations/${aws_apigatewayv2_integration.keys.id}"
+}
+
+resource "aws_apigatewayv2_route" "keys_delete_all" {
+  api_id = aws_apigatewayv2_api.lambda.id
+
+  route_key = "DELETE /keys"
+  target    = "integrations/${aws_apigatewayv2_integration.keys.id}"
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {
@@ -248,9 +306,10 @@ resource "aws_cloudwatch_log_group" "api_gw" {
 }
 
 resource "aws_lambda_permission" "api_gw" {
+  for_each = toset([aws_lambda_function.open_figi_cache.function_name, aws_lambda_function.keys.function_name])
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.open_figi_cache.function_name
+  function_name = each.value
   principal     = "apigateway.amazonaws.com"
 
   source_arn = "${aws_apigatewayv2_api.lambda.execution_arn}/*/*"
