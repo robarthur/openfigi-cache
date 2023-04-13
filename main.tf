@@ -118,6 +118,15 @@ resource "aws_s3_object" "keys_deploy" {
   source_hash = filemd5("deploy/keys.zip")
 }
 
+resource "aws_s3_bucket_public_access_block" "lambda_deploy" {
+  bucket = aws_s3_bucket.lambda_deploy.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
 
 resource "aws_lambda_function" "open_figi_cache" {
   
