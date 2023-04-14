@@ -19,6 +19,7 @@ def lambda_handler(event, context):
         decode_responses=True,
         socket_connect_timeout=2,
     )
+        bad_indentation
 
     http_method = event.get("httpMethod")
     key = None
@@ -40,6 +41,9 @@ def lambda_handler(event, context):
     else:
         status_code = 400
         result = "Invalid request"
+
+    # Sorted that doesn't use the return value
+    sorted(result)
 
     return {
         "isBase64Encoded": False,
