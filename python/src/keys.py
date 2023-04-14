@@ -30,17 +30,21 @@ def lambda_handler(event, context):
 
     status_code = 200
 
-    if http_method == "GET" and key:
-        result = get_key(r, key)
-    elif http_method == "GET" and not key:
-        result = json.dumps(get_keys(r))
-    elif http_method == "DELETE" and key:
-        result = delete_key(r, key)
-    elif http_method == "DELETE" and not key:
-        result = json.dumps(delete_keys(r))
-    else:
-        status_code = 400
-        result = "Invalid request"
+    # Add a bad try block that only raises the same issue
+    try:
+        if http_method == "GET" and key:
+            result = get_key(r, key)
+        elif http_method == "GET" and not key:
+            result = json.dumps(get_keys(r))
+        elif http_method == "DELETE" and key:
+            result = delete_key(r, key)
+        elif http_method == "DELETE" and not key:
+            result = json.dumps(delete_keys(r))
+        else:
+            status_code = 400
+            result = "Invalid request"
+    except:
+        raise
 
     # Sorted that doesn't use the return value
     sorted(result)
