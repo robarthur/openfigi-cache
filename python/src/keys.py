@@ -19,7 +19,6 @@ def lambda_handler(event, context):
         decode_responses=True,
         socket_connect_timeout=2,
     )
-        bad_indentation
 
     http_method = event.get("httpMethod")
     key = None
@@ -43,8 +42,15 @@ def lambda_handler(event, context):
         else:
             status_code = 400
             result = "Invalid request"
-    except:
+    except Exception:
         raise
+
+    # Wrong +=
+    count = 1
+    count =+ 1
+
+    # Self assigned variable
+    count = count
 
     # Sorted that doesn't use the return value
     sorted(result)
